@@ -1,0 +1,137 @@
+import de.undercouch.gradle.tasks.download.Download
+plugins {
+    id "de.undercouch.download" version "3.1.2"
+}
+
+def sparkSettings = [
+    [
+        "name": "spark2Hadoop27",
+        "baseUrl": 'http://d3kbcqa49mib13.cloudfront.net',
+        //"baseUrl": "https://www.apache.org/dist/spark/spark-2.0.2",
+        "pkgUrl": "/spark-2.0.2-bin-hadoop2.7.tgz",
+        "shaChecksumUrl": "/spark-2.0.2-bin-hadoop2.7.tgz.sha",
+        "signatureUrl": "/spark-2.0.2-bin-hadoop2.7.tgz.asc",
+        "sparkVersion": "2.0.2",
+        "hadoopVersion": "2.7",
+        "fileType": "tgz"
+    ],
+    [
+        "name": "spark21Hadoop27",
+        "baseUrl": 'http://d3kbcqa49mib13.cloudfront.net',
+        //"baseUrl": "https://www.apache.org/dist/spark/spark-2.0.2",
+        "pkgUrl": "/spark-2.1.0-bin-hadoop2.7.tgz",
+        "shaChecksumUrl": "/spark-2.1.0-bin-hadoop2.7.tgz.sha",
+        "signatureUrl": "/spark-2.1.0-bin-hadoop2.7.tgz.asc",
+        "sparkVersion": "2.1.0",
+        "hadoopVersion": "2.7",
+        "fileType": "tgz"
+    ]
+]
+
+def generateSparkTasks = { subName, baseUrl, pkgUrl, sparkVersion, hadoopVersion, fileType ->
+    def taskNameDownload = "downloadSpark-${subName}"
+    def taskNameExtract = "extractSpark-${subName}"
+    def taskNameP4 = "p4Spark-${subName}"
+    def taskNameClean = "cleanSpark-${subName}"
+    def hadoopStr = hadoopVersion == null ? "without-hadoop" : "hadoop" + hadoopVersion
+    def extractDir = 'spark'
+    def p4FileName = 'spark-' + sparkVersion + '-bin-' + hadoopStr + '.p4'
+    def p4SoftwareName = 'spark-' + hadoopStr
+    def tarName = 'spark-' + sparkVersion + '-bin-' + hadoopStr + '.' + fileType
+    def p4File = new File(buildDir, p4FileName)
+
+    tasks.create(name: taskNameDownload, type: Download) {
+        src baseUrl + pkgUrl
+        dest new File(buildDir, tarName)
+        onlyIfNewer true
+    }
+    tasks.create(name: taskNameExtract, dependsOn: tasks[taskNameDownload], type: Copy){
+        from (tarTree(tasks[taskNameDownload].dest)){
+            //exclude '*/examples/**'
+        }
+        eachFile { details ->
+            // remove first directory of the path
+            details.path = details.path.substring(details.path.indexOf('/'))
+        }
+        includeEmptyDirs = false
+        into new File(buildDir, extractDir)
+    }
+    tasks.create(name: taskNameP4, dependsOn:tasks[taskNameExtract], type: Exec){
+        workingDir buildDir
+        commandLine 'scpm', '-c', '-s', extractDir, '-n', p4SoftwareName, '-v', sparkVersion, '-p', p4FileName, '-d', '/usr/local', '--default-owner=ADMUID=10000', '--default-group=ADMG=10000'
+    }
+    tasks.create(name: taskNameClean, type: Delete){
+        delete new File(buildDir, extractDir)
+        delete p4File
+    }
+}
+
+sparkSettings.each { spark -> generateSparkTasks(spark.name, spark.baseUrl, spark.pkgUrl, spark.sparkVersion, spark.hadoopVersion, spark.fileType)}
+task downloadSparks(dependsOn: tasks.findAll{t -> t.name.startsWith("downloadSpark-")} << {})
+task extractSparks(dependsOn: tasks.findAll{t -> t.name.startsWith("extractSpark-")} << {})
+task p4Sparks(dependsOn: tasks.findAll{t -> t.name.startsWith("p4Spark-")} << {})
+task cleanSparks(dependsOn: tasks.findAll{t -> t.name.startsWith("cleanSpark-")} << {})
+
+def javaSettings = [ 
+    [
+        "name": "jdk8.0.112",
+        "url": "https://cdn.azul.com/zulu/bin/zulu8.19.0.1-jdk8.0.112-linux_x64.tar.gz",
+        "javaVersion": "jdk8.0.112",
+        "zuluVersion": "8.19.0.1",
+        "os": "linux_x64",
+        "fileType": "tar.gz",
+        "checksum": "3f95d82bf8ece272497ae2d3c5b56c3b"
+    ]
+]
+
+def generateJavaTasks = { name, url, zuluVersion, javaVersion, os, fileType ->
+    def taskNameDownload = "downloadJava-${name}"
+    def taskNameExtract = "extractJava-${name}"
+    def taskNameP4 = "p4Java-${name}"
+    def taskNameClean = "cleanJava-${name}"
+    def extractDir = 'zulu-java'
+    def p4Name = 'zulu' + zuluVersion +  '-' + javaVersion + '-' + os + '.p4'
+    def p4File = new File(buildDir, p4Name)
+
+    tasks.create(name: taskNameDownload, type: Download){
+        src url
+        dest new File(buildDir, 'zulu' + zuluVersion +  '-' + javaVersion + '-' + os + '.' + fileType)
+        onlyIfNewer true
+    }
+    tasks.create(name: taskNameExtract, dependsOn: tasks[taskNameDownload], type: Copy){
+        from (tarTree(tasks[taskNameDownload].dest)){
+            exclude '*/sample/**'
+            exclude '*/demo/**'
+            exclude '*/man/**'
+        }
+        eachFile { details ->
+            // remove first directory of the path
+            details.path = details.path.substring(details.path.indexOf('/'))
+        }
+        includeEmptyDirs = false
+        into new File (buildDir, extractDir)
+    }
+    tasks.create(name: taskNameP4, dependsOn:tasks[taskNameExtract], type: Exec){
+        workingDir buildDir
+        commandLine 'scpm', '-c', '-s', extractDir, '-n', 'zulu-java', '-p', p4Name, '-d', '/usr/local', '--default-owner=ADMUID=10000', '--default-group=ADMG=10000'
+    }
+    tasks.create(name: taskNameClean, type: Delete){
+        delete new File(buildDir, extractDir)
+        delete p4File
+    }
+}
+
+javaSettings.each { j -> generateJavaTasks(j.name, j.url, j.zuluVersion, j.javaVersion, j.os, j.fileType)}
+task downloadJavas(dependsOn: tasks.findAll{t -> t.name.startsWith("downloadJava-")} << {})
+task extractJavas(dependsOn: tasks.findAll{t -> t.name.startsWith("extractJava-")} << {})
+task p4Javas(dependsOn: tasks.findAll{t -> t.name.startsWith("p4Java-")} << {})
+task cleanJavas(dependsOn: tasks.findAll{t -> t.name.startsWith("cleanJava-")} << {})
+
+task clean(type: Delete){
+    delete buildDir
+}
+task createMetaPackage(type: Exec, dependsOn: tasks.findAll{t -> t.name.startsWith("p4")} << {}){
+    def metaPackageName = 'spark-venus-meta.p4'
+    commandLine 'scpm', '-c', '-b', '-p', buildDir.name + '/' + metaPackageName, '-f', 'src/main/resources/filelists/spark-venus.f4'
+}
+

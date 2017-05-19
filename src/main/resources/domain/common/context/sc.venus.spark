@@ -1,0 +1,72 @@
+# Copyright (C) 2017 by science + computing ag
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NODE_TYPE
+# Valid values: "MASTER" or "SLAVE"
+# e.g. NODE_TYPE=MASTER
+
+# USER
+# The user name of the spark process owner.
+# e.g. USER=scvenusSpark
+
+# WORKING_DIR
+# The systemd WorkingDirectory.
+# e.g. WORKING_DIR=/home/scvenusSpark
+
+# SPARK_WORKER_DIR
+# The SPARK_WORKER_DIR http://spark.apache.org/docs/latest/spark-standalone.html
+# e.g. SPARK_WORKER_DIR="/home/scvenusSpark/work"
+
+# SPARK_EVENT_LOG_DIR_PATH
+# e.g. SPARK_EVENT_LOG_DIR_PATH=/home/scvenusSpark/event-log
+
+# CREATE_EVENT_LOG_DIR
+# Should the SPARK_EVENT_LOG_DIR_PATH directory be created by the method?
+# values: true|false
+# default: false
+# e.g. CREATE_EVENT_LOG_DIR=true
+
+# SPARK_EVENT_LOG_DIR_SCHEME
+# The scheme of SPARK_EVENT_LOG_DIR URI.
+# default: file
+# e.g. SPARK_EVENT_LOG_DIR_SCHEME=file
+
+# MASTER_URL_HOST
+# Specifies the master hostname or ip address of the spark master url.
+# See also MASTER_URL_PORT
+#
+# e.g. MASTER_URL_HOST=client4.example.com
+
+# MASTER_URL_PORT
+# Specifies the master port of the spark master url.
+# See also MASTER_URL_HOST
+# default: 7077
+# e.g. MASTER_URL_PORT=7078
+
+# SPARK_MASTER_HOST
+# http://spark.apache.org/docs/latest/spark-standalone.html
+# e.g. SPARK_MASTER_HOST=client4.example.com
+
+# AUTHENTICATE
+# values: true|false
+# default: false
+# e.g. AUTHENTICATE=true
+
+
+# SECRET
+# if AUTHENTICATE is true this is the shared secret
+# e.g. SECRET=veryS3cret!
+
+SYSTEMD_AFTER="scamd.service autofs.service scVenus_ldap.service nslcd.service sssd.service"

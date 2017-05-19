@@ -1,0 +1,26 @@
+# Copyright (C) 2017 by science + computing ag
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+#NOTEBOOK_PASSWORD_HASH
+# e.g NOTEBOOK_PASSWORD_HASH=sha1:aeee03cb33c0:0e4d047e13e3f853b775c6df15baf0ce329489d0
+
+PYSPARK_DRIVER_PYTHON=/usr/local/anaconda3/bin/jupyter
+PYSPARK_DRIVER_PYTHON_OPTS="notebook --NotebookApp.open_browser=False --NotebookApp.ip='*'"
+PYSPARK_PYTHON=/usr/local/anaconda3/bin/python
+SYSTEMD_AFTER="scamd.service autofs.service scVenus_ldap.service nslcd.service sssd.service"
+
+# notebooks
+# A list of notebook names which will be imported from configuration depot path /home/jupyter/$notebook
+# e.g. notebooks="notebook1 notebook2"

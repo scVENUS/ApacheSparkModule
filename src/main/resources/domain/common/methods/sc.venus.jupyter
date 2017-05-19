@@ -1,0 +1,262 @@
+# Interpreter: python
+#
+# Copyright (C) 2017 by science + computing ag
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+import tempfile
+import os
+import pwd
+import subprocess
+import sys
+
+import venus
+
+SPARK_VARS = {
+    "SPARK_CONF_DIR": "/usr/local/etc/spark",
+    "SPARK_INST_DIR": "/usr/local/spark",
+    "WORKING_DIR": None,
+    "USER": None
+}
+
+VARS = {
+    "JAVA_HOME": "/usr/local/zulu-java",
+    "PYSPARK_DRIVER_PYTHON": None,
+    "PYSPARK_DRIVER_PYTHON_OPTS": None,
+    "PYSPARK_PYTHON": None,
+    "SYSTEMD_AFTER": "",
+    "SYSTEMD_WANTS": "",
+    "NOTEBOOK_PASSWORD_HASH": None
+}
+
+REQUIRED_VARS = [
+    "JAVA_HOME",
+    "PYSPARK_DRIVER_PYTHON",
+    "PYSPARK_DRIVER_PYTHON_OPTS",
+    "PYSPARK_PYTHON",
+    "NOTEBOOK_PASSWORD_HASH"
+]
+
+REQUIRED_SPARK_VARS = [
+    "SPARK_CONF_DIR",
+    "SPARK_INST_DIR",
+    "USER"
+]
+
+ANACONDA_PKG = "anaconda"
+JUPYTER_WRAPPER = "/usr/local/bin/scvenus-jupyter"
+JUPYTER_SYSTEMD_PATH = "/etc/systemd/system/scvenus-jupyter.service"
+SERVICE_NAME = "scvenus-jupyter"
+
+def doAs(new_uid, new_gid, fn, *args, **kwargs):
+    calling_uid = os.geteuid()
+    calling_gid = os.getegid()
+    if calling_uid != 0:
+        raise OSError("only root ca call doAs")
+    # switch to new uid
+    os.setregid(new_gid, new_gid)
+    os.setreuid(calling_uid, new_uid)
+    # execute functions
+    retVal = fn(*args, **kwargs)
+    # switch back to calling_uid
+    os.setreuid(new_uid, calling_uid)
+    os.setregid(calling_gid, calling_gid)
+    return retVal
+
+##############################################################################
+if venus.installflag == 'i':
+
+    #
+    # import all vars (defaults will be overridden)
+    #
+    for key in VARS.keys():
+        val = venus.get_variable(key, allowNone=True, default=VARS[key])
+        if val:
+            VARS[key] = val
+
+    #
+    # check required vars
+    #
+    missingVars = []
+    for name in REQUIRED_VARS:
+        if VARS[name] is None:
+            missingVars.append(name)
+    if len(missingVars) != 0:
+        venus.print_message("ERROR", "Some required vars have no value: " + " ".join(missingVars))
+        # don't exit yet we have to check also the SPARK_VARS
+
+    #
+    # import all spark vars (defaults will be overridden)
+    #
+    for key in SPARK_VARS.keys():
+        val = venus.get_variable(key, allowNone=True, default=SPARK_VARS[key], context="sc.venus.spark")
+        if val:
+            SPARK_VARS[key] = val
+
+    #
+    # check required spark vars
+    #
+    missingSparkVars = []
+    for name in REQUIRED_SPARK_VARS:
+        if SPARK_VARS[name] is None:
+            missingSparkVars.append(name)
+    if len(missingSparkVars) != 0:
+        venus.print_message("ERROR",
+                            "Some required vars from spark context (sc.venus.spark) have no value: " + " ".join(
+                                missingVars))
+
+    if len(missingVars) != 0 or len(missingSparkVars) != 0:
+        sys.exit(1)
+
+    #
+    # create a dictionary with all vars
+    #
+    allVars = VARS.copy()
+    allVars.update(SPARK_VARS)
+
+    #
+    # get user account details
+    #
+    try:
+        pwd_entry = pwd.getpwnam(allVars["USER"])
+        uid = pwd_entry[2]
+        gid = pwd_entry[3]
+        home_dir = pwd_entry[5]
+    except KeyError:
+        venus.print_message("ERROR", "unknown user: " + allVars["USER"])
+        sys.exit(1)
+
+    #
+    # create for configuration dir
+    #
+    config_dir = os.path.join(home_dir, ".jupyter")
+    if not doAs(uid, gid, os.path.isdir, config_dir):
+        doAs(uid,gid, os.mkdir, config_dir)
+
+    #
+    # import and adapt configuration file
+    #
+    confFilePath = os.path.join(config_dir, "jupyter_notebook_config.py")
+    confTmpFile, confTmpPath = tempfile.mkstemp(prefix="jupyter_notebook_config-py")
+    os.close(confTmpFile)
+    configTemplatePath = "/home/jupyter/jupyter_notebook_config.py"
+    rv = venus.import_file(confTmpPath, 0700, 0, 0, noBackup=True, depotPath=configTemplatePath)
+    if rv != 0:
+        venus.print_message("ERROR", configTemplatePath + " import failed")
+    confTmpFile = open(confTmpPath, 'r')
+    adaptedContent = []
+    for line in confTmpFile:
+        for var, val, in allVars.items():
+            if val is not None:
+                line_new = line.replace("%%" + var + "%%", val)
+                line = line_new
+        adaptedContent.append(line)
+    confTmpFile.close()
+    os.remove(confTmpPath)
+    confFile = doAs(uid, gid, open, confFilePath, 'w')
+    confFile.writelines(adaptedContent)
+    confFile.close()
+
+    #
+    # import notebooks
+    #
+    # TODO import files to a temporary directory and use doAs to move the files to the users home
+    notebooks = venus.get_variable("notebooks", default="")
+    if notebooks is not None:
+        for notebook in notebooks.split():
+            depotPath = "/home/jupyter/" + notebook + ".ipynb"
+            localPath = os.path.join(home_dir, notebook + ".ipynb")
+            print "Importing notebook: " + notebook
+            venus.import_file(localPath, depotPath=depotPath, owner=uid, group=gid, noBackup=True)
+
+    #
+    # install software
+    #
+    venus.add_package(ANACONDA_PKG)
+
+    #
+    # create start wrapper
+    #
+    wrapperTmpFile, wrapperTmpPath = tempfile.mkstemp(prefix="scvenus-jupyter")
+    os.close(wrapperTmpFile)
+    rv = venus.import_file(wrapperTmpPath, 0755, 0, 0, noBackup=True, depotPath=JUPYTER_WRAPPER)
+    if rv != 0:
+        venus.print_message("ERROR", JUPYTER_WRAPPER + " import failed")
+        sys.exit(1)
+    wrapperTmpFile = open(wrapperTmpPath, 'r')
+    adaptedContent = []
+    for line in wrapperTmpFile:
+        for var, val in allVars.items():
+            if val is not None:
+                line_new = line.replace("%%" + var + "%%", '"' + val + '"')
+                line = line_new
+        adaptedContent.append(line)
+    wrapperTmpFile.close()
+    wrapperTmpFile = open(wrapperTmpPath, 'w')
+    wrapperTmpFile.writelines(adaptedContent)
+    wrapperTmpFile.close()
+    os.rename(wrapperTmpPath, JUPYTER_WRAPPER)
+
+    #
+    # create jupyter systemd unit file and add to startup
+    #
+    allVars["JUPYTER_START_SCRIPT"] = JUPYTER_WRAPPER
+    systemdTempFile, systemdTempPath = tempfile.mkstemp(prefix="scvenus-jupyter-systemd")
+    os.close(systemdTempFile)
+    rv = venus.import_file(systemdTempPath, 0644, owner=0, group=0, noBackup=True, depotPath=JUPYTER_SYSTEMD_PATH)
+    if rv != 0:
+        venus.print_message("ERROR", "import failed")
+        sys.exit(1)
+    systemdTempFile = open(systemdTempPath, 'r')
+    adaptedContent = []  # let's store the lines in memory
+    for line in systemdTempFile:
+        for var, val in allVars.items():
+            if val is not None:
+                line_new = line.replace("%%" + var + "%%", val)
+                line = line_new
+        adaptedContent.append(line)
+    systemdTempFile.close()
+    systemdTempFile = open(systemdTempPath, 'w')
+    systemdTempFile.writelines(adaptedContent)
+    systemdTempFile.close()
+    os.rename(systemdTempPath, JUPYTER_SYSTEMD_PATH)
+    subprocess.call(["systemctl", "daemon-reload"])
+    subprocess.call(["systemctl", "restart", SERVICE_NAME])
+    subprocess.call(["systemctl", "enable", SERVICE_NAME], stderr=subprocess.STDOUT)
+
+##############################################################################
+elif venus.installflag == 'u':
+    #
+    # remove from startup and remove jupyter systemd unit file
+    #
+    if os.path.exists(JUPYTER_SYSTEMD_PATH):
+        subprocess.call(["systemctl", "stop", SERVICE_NAME])
+        subprocess.call(["systemctl", "disable", SERVICE_NAME], stderr=subprocess.STDOUT)
+        os.remove(JUPYTER_SYSTEMD_PATH)
+        subprocess.call(["systemctl", "daemon-reload"])
+
+    #
+    # remove anaconda package
+    #
+    uninstall_removes_software = venus.get_variable("uninstall_removes_software", default="false")
+    if uninstall_removes_software == "true":
+        venus.del_package(ANACONDA_PKG)
+
+    #
+    # delete wrapper
+    #
+    if os.path.exists(JUPYTER_WRAPPER):
+        os.remove(JUPYTER_WRAPPER)
+
+

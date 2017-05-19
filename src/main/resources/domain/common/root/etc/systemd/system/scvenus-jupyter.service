@@ -1,0 +1,13 @@
+[Unit]
+Description=scVENUS Jupyter Service
+Wants=network.target network-online.target  %%SYSTEMD_WANTS%%
+After=network.target network-online.target %%SYSTEMD_AFTER%%
+
+[Service]
+User=%%USER%%
+WorkingDirectory=%%WORKING_DIR%%
+ExecStart=%%JUPYTER_START_SCRIPT%%
+Restart=on-abort
+TimeoutStopSec=30
+[Install]
+WantedBy=multi-user.target

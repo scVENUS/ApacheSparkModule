@@ -1,0 +1,25 @@
+[Unit]
+Description=scVENUS Spark Service
+Wants=network.target network-online.target %%SYSTEMD_WANTS%%
+After=network.target network-online.target %%SYSTEMD_AFTER%%
+After=scamd.service
+After=autofs.service
+After=scVenus_ldap.service
+After=nslcd.service
+After=sssd.service
+
+[Service]
+Type=forking
+User=%%USER%%
+Environment=JAVA_HOME=%%JAVA_HOME%%
+Environment=SPARK_CONF_DIR=%%SPARK_CONF_DIR%%
+Environment=SPARK_LOG_DIR=%%SPARK_LOG_DIR%%
+Environment=SPARK_PID_DIR=%%SPARK_PID_DIR%%
+WorkingDirectory=%%WORKING_DIR%%
+ExecStart=%%SPARK_START_SCRIPT%%
+ExecStop=%%SPARK_STOP_SCRIPT%%
+Restart=on-abort
+TimeoutStopSec=30
+SuccessExitStatus=143
+[Install]
+WantedBy=multi-user.target

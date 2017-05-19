@@ -1,0 +1,85 @@
+########################################################################
+#
+# filelist: spark-venus.f4
+#
+########################################################################
+#
+
+default: $<BUILD_VERSION> = "dummy"
+default: $<DEST_PREFIX> = "/home/manager"
+
+SOFTWARE_DELIVER = "software_deliver"
+
+DIR_MODE = "mode:rwxrwsr-x"
+PKG_MODE = "mode:rw-rw-r--"
+EXE_MODE = "mode:rwxr-xr-x"
+MET_MODE = "mode:rw-r--r--"
+
+default: $<ADMU> = "manager"
+default: $<ADMG> = "admin"
+
+default: owner="$<ADMU>"
+default: group="$<ADMG>"
+
+########################################################################
+# Diverse Directories
+########################################################################
+
+default: type=dir
+default: perm="$DIR_MODE"
+
+dest="$SOFTWARE_DELIVER"
+dest="$SOFTWARE_DELIVER/spark"
+dest="domain"
+dest="domain/common"
+dest="domain/common/methods"
+dest="domain/common/context"
+dest="domain/common/root"
+dest="domain/common/root/usr"
+dest="domain/common/root/usr/local"
+dest="domain/common/root/usr/local/etc"
+dest="domain/common/root/usr/local/etc/spark"
+dest="domain/common/root/usr/local/bin"
+dest="domain/common/root/etc"
+dest="domain/common/root/etc/systemd"
+dest="domain/common/root/etc/systemd/system"
+dest="domain/common/root/home"
+dest="domain/common/root/home/jupiter"
+dest="domain/common/context"
+dest="bin"
+
+########################################################################
+# 
+########################################################################
+
+default: type=file
+default: perm="$PKG_MODE"
+source="build/spark-2.0.2-bin-hadoop2.7.p4" dest="$SOFTWARE_DELIVER/spark/spark-2.0.2-bin-hadoop2.7.p4"
+#source="build/spark-2.1.0-bin-hadoop2.7.p4" dest="$SOFTWARE_DELIVER/spark/spark-2.1.0-bin-hadoop2.7.p4"
+source="build/zulu8.19.0.1-jdk8.0.112-linux_x64.p4" dest="$SOFTWARE_DELIVER/spark/zulu8.19.0.1-jdk8.0.112-linux_x64.p4"
+#
+# add the path to the anaconda p4 package
+#
+source="/proj/venus/spark-project/anaconda.p4" dest="$SOFTWARE_DELIVER/spark/anaconda.p4"
+
+
+########################################################################
+# Methods and functions
+########################################################################
+
+
+default: type=file
+default: perm="$MET_MODE"
+
+
+dest="domain/common/methods/sc.venus.spark" source="src/main/resources/domain/common/methods/sc.venus.spark"
+dest="domain/common/methods/sc.venus.jupyter" source="src/main/resources/domain/common/methods/sc.venus.jupyter"
+dest="domain/common/root/usr/local/etc/spark/spark-env.sh" source="src/main/resources/domain/common/root/usr/local/etc/spark/spark-env.sh"
+dest="domain/common/root/usr/local/etc/spark/spark-defaults.conf" source="src/main/resources/domain/common/root/usr/local/etc/spark/spark-defaults.conf"
+dest="domain/common/root/usr/local/bin/scvenus-jupyter" source="src/main/resources/domain/common/root/usr/local/bin/scvenus-jupyter"
+dest="domain/common/root/etc/systemd/system/scvenus-spark.service" source="src/main/resources/domain/common/root/etc/systemd/system/scvenus-spark.service"
+dest="domain/common/root/etc/systemd/system/scvenus-jupyter.service" source="src/main/resources/domain/common/root/etc/systemd/system/scvenus-jupyter.service"
+dest="domain/common/root/home/jupyter/jupyter_notebook_config.py" source="src/main/resources/domain/common/root/home/jupyter/jupyter_notebook_config.py"
+dest="domain/common/context/sc.venus.spark" source="src/main/resources/domain/common/context/sc.venus.spark"
+dest="domain/common/context/sc.venus.jupyter" source="src/main/resources/domain/common/context/sc.venus.jupyter"
+dest="bin/scjupyter-passwd.py" source="src/main/resources/bin/scjupyter-passwd.py"

@@ -1,0 +1,342 @@
+# Interpreter: python
+#
+# Copyright (C) 2017 by science + computing ag
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+
+import tempfile
+import os
+import pwd
+import shutil
+import subprocess
+import sys
+
+import venus
+
+VARS = {
+    "HADOOP_CONF_DIR": None,
+    "SPARK_LOCAL_IP": None,
+    "SPARK_PUBLIC_DNS": None,
+    "SPARK_CLASSPATH": None,
+    "SPARK_LOCAL_DIRS": None,
+    "MESOS_NATIVE_JAVA_LIBRARY": None,
+    "SPARK_EXECUTOR_INSTANCES": None,
+    "SPARK_EXECUTOR_CORES": None,
+    "SPARK_EXECUTOR_MEMORY": None,
+    "SPARK_DRIVER_MEMORY": None,
+    "SPARK_MASTER_HOST": None,
+    "SPARK_MASTER_PORT": None,
+    "SPARK_MASTER_WEBUI_PORT": None,
+    "SPARK_MASTER_OPTS": None,
+    "SPARK_WORKER_CORES": None,
+    "SPARK_WORKER_MEMORY": None,
+    "SPARK_WORKER_PORT": None,
+    "SPARK_WORKER_WEBUI_PORT": None,
+    "SPARK_WORKER_INSTANCES": None,
+    "SPARK_WORKER_DIR": None,
+    "SPARK_WORKER_OPTS": None,
+    "SPARK_DAEMON_MEMORY": None,
+    "SPARK_HISTORY_OPTS": None,
+    "SPARK_SHUFFLE_OPTS": None,
+    "SPARK_DAEMON_JAVA_OPTS": None,
+    "SPARK_CONF_DIR": "/usr/local/etc/spark",
+    "SPARK_LOG_DIR": "/var/log/spark",
+    "SPARK_PID_DIR": "/var/run/spark",
+    "SPARK_IDENT_STRING": None,
+    "SPARK_NICENESS": None,
+    "MASTER_URL_HOST": None,
+    "MASTER_URL_PORT": "7077",
+    "JAVA_HOME": "/usr/local/zulu-java",
+    "WORKING_DIR": None,
+    "USER": None,
+    "SPARK_INST_DIR": "/usr/local/spark",
+    "SPARK_EVENT_LOG_DIR_SCHEME": "file",
+    "SPARK_EVENT_LOG_DIR_PATH": None,
+    "CREATE_EVENT_LOG_DIR": "false",
+    "PYTHONHASHSEED": "323",
+    "NODE_TYPE": "MASTER",
+    "SYSTEMD_AFTER": "",
+    "SYSTEMD_WANTS": "",
+    "AUTHENTICATE": "false",
+    "SECRET": ""
+}
+
+SPARK_ENV_VARS = [
+    "HADOOP_CONF_DIR",
+    "SPARK_LOCAL_IP",
+    "SPARK_PUBLIC_DNS",
+    "SPARK_CLASSPATH",
+    "SPARK_LOCAL_DIRS",
+    "MESOS_NATIVE_JAVA_LIBRARY",
+    "SPARK_EXECUTOR_INSTANCES",
+    "SPARK_EXECUTOR_CORES",
+    "SPARK_EXECUTOR_MEMORY",
+    "SPARK_DRIVER_MEMORY",
+    "SPARK_MASTER_HOST",
+    "SPARK_MASTER_PORT",
+    "SPARK_MASTER_WEBUI_PORT",
+    "SPARK_MASTER_OPTS",
+    "SPARK_WORKER_CORES",
+    "SPARK_WORKER_MEMORY",
+    "SPARK_WORKER_PORT",
+    "SPARK_WORKER_WEBUI_PORT",
+    "SPARK_WORKER_INSTANCES",
+    "SPARK_WORKER_DIR",
+    "SPARK_WORKER_OPTS",
+    "SPARK_DAEMON_MEMORY",
+    "SPARK_HISTORY_OPTS",
+    "SPARK_SHUFFLE_OPTS",
+    "SPARK_DAEMON_JAVA_OPTS",
+    "SPARK_PUBLIC_DNS",
+    "SPARK_CONF_DIR",
+    "SPARK_LOG_DIR",
+    "SPARK_PID_DIR",
+    "SPARK_IDENT_STRING",
+    "SPARK_NICENESS",
+    "PYTHONHASHSEED"
+]
+
+SPARK_SYSTEMD_PATH = "/etc/systemd/system/scvenus-spark.service"
+DEFAULT_SPARK_PKG = "spark-hadoop2.7"
+CONF_DIR = "/usr/local/etc"
+JAVA_PKG="zulu-java"
+
+def doAs(new_uid, new_gid, fn, *args, **kwargs):
+    calling_uid = os.geteuid()
+    calling_gid = os.getegid()
+    if calling_uid != 0:
+        raise OSError("only root ca call doAs")
+    # switch to new uid
+    os.setregid(new_gid, new_gid)
+    os.setreuid(calling_uid, new_uid)
+    # execute functions
+    fn(*args, **kwargs)
+    # switch back to calling_uid
+    os.setreuid(new_uid, calling_uid)
+    os.setregid(calling_gid, calling_gid)
+
+##############################################################################
+if venus.installflag == 'i':
+    REQUIRED_VARS = [
+        "MASTER_URL_HOST",
+        "JAVA_HOME",
+        "SPARK_INST_DIR",
+        "SPARK_LOG_DIR",
+        "SPARK_PID_DIR",
+        "USER",
+        "WORKING_DIR",
+        "SPARK_WORKER_DIR",
+        "SPARK_EVENT_LOG_DIR_SCHEME",
+        "SPARK_EVENT_LOG_DIR_PATH",
+        "AUTHENTICATE",
+        "SECRET"
+    ]
+
+    #
+    # import all vars (defaults will be overridden)
+    #
+    for key in VARS.keys():
+        val = venus.get_variable(key, allowNone=True, default=VARS[key])
+        if val:
+            VARS[key] = val
+
+    #
+    # check required vars
+    #
+    missingVars = []
+    for name in REQUIRED_VARS:
+        if VARS[name] is None:
+            missingVars.append(name)
+    if len(missingVars) != 0:
+        venus.print_message("ERROR", "Some required vars have no value: " + " ".join(missingVars))
+        sys.exit(1)
+
+    #
+    # check node type
+    #
+    nodeType = VARS["NODE_TYPE"]
+    if nodeType not in ["MASTER", "SLAVE"]:
+        venus.print_message("ERROR", "The value for NODE_TYPE must be either \"MASTER\" or \"SLAVE\"")
+        sys.exit(1)
+
+    try:
+        pwd_entry = pwd.getpwnam(VARS["USER"])
+        uid = pwd_entry[2]
+        gid = pwd_entry[3]
+    except KeyError:
+        venus.print_message("ERROR", "unknown user: " + VARS["USER"])
+        sys.exit(1)
+
+    #
+    # create SPARK_EVENT_LOG_DIR URI
+    #
+    VARS["SPARK_EVENT_LOG_DIR"] = VARS["SPARK_EVENT_LOG_DIR_SCHEME"] + "://" + VARS["SPARK_EVENT_LOG_DIR_PATH"]
+
+    #
+    # create SPARK_EVENT_LOG_DIR_PATH
+    #
+    if VARS["CREATE_EVENT_LOG_DIR"] == "true" and VARS["SPARK_EVENT_LOG_DIR_SCHEME"] == "file":
+        if not os.path.exists(VARS["SPARK_EVENT_LOG_DIR_PATH"]):
+            doAs(uid, gid, os.mkdir, VARS["SPARK_EVENT_LOG_DIR_PATH"], 0700)
+
+    DIRS = [VARS["SPARK_CONF_DIR"], VARS["SPARK_LOG_DIR"], VARS["SPARK_PID_DIR"]]
+
+    #
+    # available spark software: spark-without-hadoop, spark-hadoop2.7
+    #
+    venus.add_package(JAVA_PKG)
+    spark_software = venus.get_variable("spark_software", default=DEFAULT_SPARK_PKG)
+    spark_version = venus.get_variable("spark_version", allowNone=True);
+    if spark_version is None:
+        venus.add_package(spark_software)
+    else:
+        venus.add_package(spark_software, spark_version)
+
+    #
+    # create some directories
+    #
+    for folder in DIRS:
+        if os.path.exists(folder) and not os.path.isdir(folder):
+            venus.print_message("ERROR", "invalid dir found: " + folder)
+            sys.exit(1)
+        elif os.path.exists(folder):
+            os.chown(folder, uid, gid)
+        else:
+            os.mkdir(folder, 0755)
+        os.chown(folder, uid, gid)
+
+    #
+    # create spark-env.sh
+    #
+    sparkEnvPath = os.path.join(VARS["SPARK_CONF_DIR"], "spark-env.sh")
+    sparkEnvTempFile, sparkEnvTempPath = tempfile.mkstemp(prefix="spark-env.sh.", dir=VARS["SPARK_CONF_DIR"])
+    os.close(sparkEnvTempFile)
+    rv = venus.import_file(sparkEnvTempPath, 0644, uid, gid, noBackup=True,
+                           depotPath="/usr/local/etc/spark/spark-env.sh")
+    if rv != 0:
+        venus.print_message("ERROR", "spark-env.sh import failed")
+        sys.exit(1)
+    sparkEnvTempFile = open(sparkEnvTempPath, mode='a')
+    for key in SPARK_ENV_VARS:
+        val = VARS[key]
+        if val is not None:
+            sparkEnvTempFile.write("export " + key + "=" + val + "\n")
+    sparkEnvTempFile.close()
+    venus.save_file(sparkEnvPath)
+    os.rename(sparkEnvTempPath, sparkEnvPath)
+
+    #
+    # construct MASTER_URL
+    #
+    MASTER_URL = "spark://" + VARS["MASTER_URL_HOST"] + ":" + VARS["MASTER_URL_PORT"]
+    VARS["MASTER_URL"] = MASTER_URL
+
+    #
+    # create spark-defaults.conf
+    #
+    sparkDefaultsPath = os.path.join(VARS["SPARK_CONF_DIR"], "spark-defaults.conf")
+    sparkDefaultsTempFile, sparkDefaultsTempPath = tempfile.mkstemp(prefix="spark-defaults.conf",
+                                                                    dir=VARS["SPARK_CONF_DIR"])
+    os.close(sparkDefaultsTempFile)
+    rv = venus.import_file(sparkDefaultsTempPath, 0644, uid, gid, noBackup=True,
+                           depotPath="/usr/local/etc/spark/spark-defaults.conf")
+    if rv != 0:
+        venus.print_message("ERROR", "spark-defaults.conf import failed")
+        sys.exit(1)
+    sparkDefaultsTempFile = open(sparkDefaultsTempPath, 'r')
+    adaptedContent = []
+    for line in sparkDefaultsTempFile:
+        for var, val in VARS.items():
+            if val is not None:
+                line_new = line.replace("%%" + var + "%%", val)
+                line = line_new
+        adaptedContent.append(line)
+    sparkDefaultsTempFile.close()
+    sparkDefaultsTempFile = open(sparkDefaultsTempPath, 'w')
+    sparkDefaultsTempFile.writelines(adaptedContent)
+    sparkDefaultsTempFile.close()
+    venus.save_file(sparkDefaultsPath)
+    os.rename(sparkDefaultsTempPath, sparkDefaultsPath)
+
+    #
+    # create spark systemd unit file and add to startup
+    #
+    if nodeType == "MASTER":
+        VARS["SPARK_START_SCRIPT"] = os.path.join(VARS["SPARK_INST_DIR"], "sbin/start-master.sh")
+        VARS["SPARK_STOP_SCRIPT"] = os.path.join(VARS["SPARK_INST_DIR"], "sbin/stop-master.sh")
+    else:
+        VARS["SPARK_START_SCRIPT"] = os.path.join(VARS["SPARK_INST_DIR"], "sbin/start-slave.sh") + " '" + MASTER_URL + "'"
+        VARS["SPARK_STOP_SCRIPT"] = os.path.join(VARS["SPARK_INST_DIR"], "sbin/stop-slave.sh")
+
+    systemdTempFile, systemdTempPath = tempfile.mkstemp(prefix="scvenus-spark-systemd")
+    os.close(systemdTempFile)
+    rv = venus.import_file(systemdTempPath, 0644, owner=0, group=0, noBackup=True, depotPath=SPARK_SYSTEMD_PATH)
+    if rv != 0:
+        venus.print_message("ERROR", "import failed")
+        sys.exit(1)
+    systemdTempFile = open(systemdTempPath, 'r')
+    adaptedContent = []  # let's store the lines in memory
+    for line in systemdTempFile:
+        for var, val in VARS.items():
+            if val is not None:
+                line_new = line.replace("%%" + var + "%%", val)
+                line = line_new
+        adaptedContent.append(line)
+    systemdTempFile.close()
+    systemdTempFile = open(systemdTempPath, 'w')
+    systemdTempFile.writelines(adaptedContent)
+    systemdTempFile.close()
+    os.rename(systemdTempPath, SPARK_SYSTEMD_PATH)
+    subprocess.call(["systemctl", "daemon-reload"])
+    subprocess.call(["systemctl", "restart", "scvenus-spark"])
+    subprocess.call(["systemctl", "enable", "scvenus-spark"], stderr=subprocess.STDOUT)
+
+##############################################################################
+elif venus.installflag == 'u':
+    REQUIRED_VARS = ["SPARK_CONF_DIR", "SPARK_LOG_DIR", "SPARK_PID_DIR"]
+    #
+    # import all vars (defaults will be overridden)
+    #
+    for key in REQUIRED_VARS:
+        val = venus.get_variable(key, allowNone=True, default=VARS[key])
+        if val:
+            VARS[key] = val
+
+    DIRS = [VARS["SPARK_CONF_DIR"], VARS["SPARK_LOG_DIR"], VARS["SPARK_PID_DIR"]]
+
+    #
+    # remove from init
+    #
+
+    if os.path.exists(SPARK_SYSTEMD_PATH):
+        subprocess.call(["systemctl", "stop", "scvenus-spark"])
+        subprocess.call(["systemctl", "disable", "scvenus-spark"], stderr=subprocess.STDOUT)
+        os.remove(SPARK_SYSTEMD_PATH)
+        subprocess.call(["systemctl", "daemon-reload"])
+
+    #
+    # remove config, log and pid directories
+    # Only directories named "spark" will be removed others not.
+    # In order to prevent the removal of any directory owned by the OS.
+    #
+    for folder in DIRS:
+        if os.path.exists(folder) and os.path.basename(folder) == "spark":
+            shutil.rmtree(folder)
+
+    uninstall_removes_software = venus.get_variable("uninstall_removes_software", default="false")
+    if uninstall_removes_software == "true":
+        spark_software = venus.get_variable("spark_software", default=DEFAULT_SPARK_PKG)
+        venus.del_package(spark_software)
+        venus.del_package(JAVA_PKG)
